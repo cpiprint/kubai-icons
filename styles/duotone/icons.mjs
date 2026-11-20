@@ -92,6 +92,99 @@ const FAN = (() => {
   return { band, wedge };
 })();
 
+// --- Objects that need slopes or points (GUIDE.md §1, second exception) ---------------------
+
+// A five-pointed star centred on (cx, cy): outer radius ro, inner ri, drawn sy times as tall so
+// it fills the circle keyline both ways. Ten points, clockwise from the top tip.
+const starPts = (cx, cy, ro, ri, sy = 1) => Array.from({ length: 10 }, (_, i) => {
+  const a = ((-90 + 36 * i) * Math.PI) / 180, d = i % 2 ? ri : ro;
+  return [f3(cx + d * Math.cos(a)), f3(cy + d * Math.sin(a) * sy)];
+});
+
+// Arc helpers for outlines made of circles: the end points of an arc of radius rad round c
+// from p to q, going the way that passes direction via (or the short way when via is null).
+const arcTo = (c, rad, p, q, via = null) => {
+  const ang = ([x, y]) => Math.atan2(y - c[1], x - c[0]), T = 2 * Math.PI, mod = (v) => ((v % T) + T) % T;
+  const a0 = ang(p), da = mod(ang(q) - a0);
+  const sweep = via == null ? (da < Math.PI ? 1 : 0) : (mod(via - a0) < da ? 1 : 0);
+  const span = sweep ? da : T - da;
+  return `A${f3(rad)} ${f3(rad)} 0 ${span > Math.PI ? 1 : 0} ${sweep} ${f3(q[0])} ${f3(q[1])}`;
+};
+
+// A crescent: the disc (8, 8, R1) less the disc (cx, cy, R2). Each tip is rounded at f by a
+// circle touching both edges (the same way the heart rounds its tip).
+const crescent = (R1, cx, cy, R2, f = 0.5) => {
+  const d1 = R1 - f, d2 = R2 + f, dx = cx - 8, dy = cy - 8, Dd = Math.hypot(dx, dy);
+  const a = (d1 * d1 - d2 * d2 + Dd * Dd) / (2 * Dd), h = Math.sqrt(d1 * d1 - a * a);
+  const mx = 8 + (a * dx) / Dd, my = 8 + (a * dy) / Dd;
+  const F = [[mx + (h * dy) / Dd, my - (h * dx) / Dd], [mx - (h * dy) / Dd, my + (h * dx) / Dd]];
+  const on1 = ([x, y]) => [8 + ((x - 8) * R1) / d1, 8 + ((y - 8) * R1) / d1];
+  const on2 = ([x, y]) => [cx + ((x - cx) * R2) / d2, cy + ((y - cy) * R2) / d2];
+  const away = Math.atan2(-dy, -dx), toward = Math.atan2(8 - cy, 8 - cx);
+  const p = (pt) => `${f3(pt[0])} ${f3(pt[1])}`;
+  return `M${p(on1(F[0]))}${arcTo([8, 8], R1, on1(F[0]), on1(F[1]), away)}${arcTo(F[1], f, on1(F[1]), on2(F[1]))}` +
+    `${arcTo([cx, cy], R2, on2(F[1]), on2(F[0]), toward)}${arcTo(F[0], f, on2(F[0]), on1(F[0]))}Z`;
+};
+
+// A drop: a circle (8, cy, rad) with two straight sides running up to a tip at (8, tip), the tip
+// rounded at f.
+const dropPath = (cy, rad, tip, f) => {
+  const d = cy - tip, al = Math.asin(rad / d), b = Math.acos(rad / d), k = f / Math.tan(al);
+  const P = (s) => [8 + s * rad * Math.sin(b), cy - rad * Math.cos(b)];
+  const Q = (s) => { const [px, py] = P(s), l = Math.hypot(px - 8, py - tip); return [8 + ((px - 8) * k) / l, tip + ((py - tip) * k) / l]; };
+  const p = (pt) => `${f3(pt[0])} ${f3(pt[1])}`;
+  return `M${p(Q(-1))}A${f} ${f} 0 0 1 ${p(Q(1))}L${p(P(1))}A${rad} ${rad} 0 1 1 ${p(P(-1))}Z`;
+};
+
+// The badge's sparkle at any size: four tips (half-size T) rounded at f, joined by concave arcs
+// of radius rho tangent to the tip circles.
+const sparkleAt = (cx, cy, T, f = 0.5, rho = (1.75 * T) / 3) => {
+  const a = T - f, c = (a + Math.sqrt(2 * (rho + f) ** 2 - a * a)) / 2;
+  const tips = [[0, -a], [a, 0], [0, a], [-a, 0]], arcs = [[c, -c], [c, c], [-c, c], [-c, -c]];
+  const touch = ([tx, ty], [ax, ay]) => { const l = Math.hypot(ax - tx, ay - ty); return [tx + (f * (ax - tx)) / l, ty + (f * (ay - ty)) / l]; };
+  const p = (pt) => `${f3(cx + pt[0])} ${f3(cy + pt[1])}`;
+  let d = `M${p(touch(tips[0], arcs[3]))}`;
+  tips.forEach((tp, i) => { d += `A${f} ${f} 0 0 1 ${p(touch(tp, arcs[i]))}A${f3(rho)} ${f3(rho)} 0 0 0 ${p(touch(tips[(i + 1) % 4], arcs[i]))}`; });
+  return d + 'Z';
+};
+
+// A folded map: three panels whose top and bottom edges zigzag at each fold.
+const MAP = polygon([[1, 3.5], [5.667, 2], [10.333, 3.5], [15, 2], [15, 12.5], [10.333, 14], [5.667, 12.5], [1, 14]], [r, 1, 1, r, r, 1, 1, r]);
+
+// A cut gem: a flat table, a girdle at its widest, and a point at the bottom.
+const GEM = polygon([[4.5, 2], [11.5, 2], [15.3, 5.75], [8, 14.6], [0.7, 5.75]], [1, 1, 0.75, 1, 0.75]);
+
+// A bar laid along a line through (cx, cy) at deg (0 is to the right, -45 up and to the right):
+// from distance t0 to t1 along it, w wide. With point, the far end narrows to a point instead.
+const AXIS = (cx, cy, deg, t0, t1, w, _ = null, point = false) => {
+  const a = (deg * Math.PI) / 180, u = [Math.cos(a), Math.sin(a)], v = [-u[1], u[0]];
+  const P = (t, s) => [f3(cx + t * u[0] + s * v[0]), f3(cy + t * u[1] + s * v[1])];
+  return point ? [P(t0, -w / 2), P(t1, 0), P(t0, w / 2)] : [P(t0, -w / 2), P(t1, -w / 2), P(t1, w / 2), P(t0, w / 2)];
+};
+
+// A sticky note with its lower right corner folded along a 45° line.
+const NOTE = polygon([[2, 2], [14, 2], [14, 10], [10, 14], [2, 14]], [R, R, 1, 1, R]);
+
+// A funnel chart's outline: wide at the top, narrowing to the bottom.
+const FUNNEL = polygon([[1.4, 2], [14.6, 2], [10.5, 14], [5.5, 14]], [r, r, 1, 1]);
+
+// A radar chart: points along five spokes from (8, cy), the first straight up, at fractions f of
+// radius rad, drawn 5% taller.
+const RADAR = (f, rad, cy = 8.6, sy = 1.05) => f.map((k, i) => {
+  const a = ((-90 + 72 * i) * Math.PI) / 180;
+  return [f3(8 + k * rad * Math.cos(a)), f3(cy + k * rad * Math.sin(a) * sy)];
+});
+
+// A plane seen from above in one light outline: a fuselage, swept wings and a swept tail.
+const PLANE = pill(6.75, 2, 2.5, 12) + polygon([[2, 8.25], [8, 4.5], [14, 8.25], [14, 11.25], [8, 9], [2, 11.25]], [0.75, 0, 0.75, 0.75, 0, 0.75]) +
+  polygon([[4.5, 12.25], [8, 10.5], [11.5, 12.25], [11.5, 14], [8, 12.5], [4.5, 14]], [0.5, 0, 0.5, 0.5, 0, 0.5]);
+
+// A traffic cone: a narrow flat top widening to the base.
+const CONE = polygon([[6.75, 1], [9.25, 1], [12.75, 12], [3.25, 12]], [1, 1, S, S]);
+
+// An hourglass's glass: two bulbs that taper to a waist.
+const GLASS = polygon([[3.5, 3.5], [12.5, 3.5], [9.25, 8], [12.5, 12.5], [3.5, 12.5], [6.75, 8]], [1, 1, 1.5, 1, 1, 1.5]);
+
 export const ICONS = {
   folder: {
     label: '文件夹',
@@ -1860,6 +1953,421 @@ export const ICONS = {
       L(rr(1, 6, 14, 8, M), Bt),
       L(circ(5, 10, 2)),
       L(pill(9, 8.25, 3.75, D) + pill(9, 10.5, 3.75, D))
+    ]
+  },
+  star: {
+    label: '星标',
+    key: 'circle',
+    layers: [
+      // The five points are the star (GUIDE §1, slopes and points): every corner rounded at 0.5.
+      // A true star is wider than tall, so it is drawn 6% taller to fill the circle; the tips
+      // sit past the keyline so the rounded tips land on it. A small blue star on its face.
+      L(polygon(starPts(8, 8.69, 7.88, 4.07, 1.058), 0.5), Bt),
+      L(polygon(starPts(8, 8.69, 3.5, 1.8, 1.058), 0.5))
+    ]
+  },
+  send: {
+    label: '发送',
+    key: 'square',
+    layers: [
+      // A paper plane: two triangular wings folded along a 45° line, mirror images of each other.
+      // The lower wing is the body clipped in blue. The tips sit past the box so the rounded tips
+      // (0.75) land on it.
+      L(polygon([[0.45, 6], [14.45, 1.55], [10, 15.55], [7.4, 8.6]], [0.75, 0.75, 0.75, 0.5]), Bt),
+      L(polygon([[0.45, 6], [14.45, 1.55], [10, 15.55], [7.4, 8.6]], [0.75, 0.75, 0.75, 0.5]), { clip: polygon([[21, -5], [21, 21], [-5, 21]]) })
+    ]
+  },
+  moon: {
+    label: '月亮',
+    key: 'circle',
+    layers: [
+      // A crescent: the disc less a disc to the upper right, the two tips rounded at 0.5 by circles
+      // touching both edges (only circles and arcs). A short blue glint, as heart's.
+      L(crescent(7, 10.72, 5.28, 4.75), Bt),
+      L('M3.75 9.5A4.5 4.5 0 0 0 6.5 12.25', { sw: D })
+    ]
+  },
+  map: {
+    label: '地图',
+    key: 'landscape',
+    layers: [
+      // A folded map: three panels whose top and bottom edges zigzag at the folds (the slopes),
+      // the middle panel in blue. One layer per panel so the motion can unfold the outer two.
+      L(MAP, { ...Bt, clip: rr(0, 0, 5.667, 16) }),
+      L(MAP, { clip: rr(5.667, 0, 4.667, 16) }),
+      L(MAP, { ...Bt, clip: rr(10.333, 0, 5.667, 16) })
+    ]
+  },
+  trophy: {
+    label: '奖杯',
+    key: 'square',
+    layers: [
+      // A cup that tapers down to its stem with two slopes (a round-bottomed cup with handles read
+      // as headphones), blue handles behind it cut by its gap, and a blue stem and foot one gap below.
+      L('M5.5 3H4.5A1.75 1.75 0 0 0 4.5 6.5H5.5M10.5 3H11.5A1.75 1.75 0 0 1 11.5 6.5H10.5', { sw: K }),
+      L(polygon([[4.5, 2], [11.5, 2], [11.5, 5.5], [9, 9.75], [7, 9.75], [4.5, 5.5]], [1, 1, 2, 1, 1, 2]), { ...Bt, gap: W }),
+      L(body(4.5, 12.25, 7, 1.75, t, [{ x: 7.25, w: 1.5, h: 1.5, c: 0.5 }]))
+    ]
+  },
+  'cloud-lightning': {
+    label: '雷电',
+    key: 'wide',
+    layers: [
+      // cloud-rain's cloud and a blue bolt over its lower edge, cutting a gap of W round itself. The
+      // bolt's zigzag and point need slopes; its tip sits past the keyline.
+      L(pill(1, 4.5, 14, 5) + circ(8.5, 5.5, 3), Bt),
+      L(polygon([[8.5, 7], [11.25, 7], [9.75, 9.75], [11.5, 9.75], [7.25, 15.3], [8.25, 11.25], [6.25, 11.25]], [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]), { gap: W })
+    ]
+  },
+  'triangle-alert': {
+    label: '警告',
+    key: 'landscape',
+    layers: [
+      // A warning sign: a triangle (the slopes) with corners rounded at 2, drawn past the keyline so
+      // the rounded corners land on it, and circle-alert's exclamation mark.
+      L(polygon([[8, 0], [16.4, 14], [-0.4, 14]], 2), Bt),
+      L('M8 6V8.5', { sw: K }),
+      L(circ(8, 11.375, 1.125))
+    ]
+  },
+  navigation: {
+    label: '导航',
+    key: 'tall',
+    layers: [
+      // The navigation arrow: two slopes meet in a point, with a notch at the foot; the right half
+      // in blue. Tip and feet sit past the keyline.
+      L(polygon([[8, -0.5], [13.8, 16.2], [8, 12.25], [2.2, 16.2]], [0.75, 0.75, 0.5, 0.75]), Bt),
+      L(polygon([[8, -0.5], [13.8, 16.2], [8, 12.25], [2.2, 16.2]], [0.75, 0.75, 0.5, 0.75]), { clip: rr(8, 0, 8, 16) })
+    ]
+  },
+  compass: {
+    label: '指南针',
+    key: 'circle',
+    layers: [
+      // A light dial and a blue needle pointing north: a diamond whose two points need slopes,
+      // with a white pivot hole.
+      L(circ(8, 8, 7), Bt),
+      L(polygon([[8, 2.4], [10.25, 8], [8, 13.6], [5.75, 8]], [0.5, 0.75, 0.5, 0.75]), { cut: [C(circ(8, 8, 0.75))] })
+    ]
+  },
+  sparkles: {
+    label: '智能生成',
+    key: 'square',
+    layers: [
+      // The badge's sparkle at two sizes: a large light one and, one gap away, a small blue one.
+      L(sparkleAt(6.78, 9.22, 5, 0.75), Bt),
+      L(sparkleAt(11.75, 4.25, 2.25))
+    ]
+  },
+  droplet: {
+    label: '水滴',
+    key: 'tall',
+    layers: [
+      // A circle with two straight sides running up to a point rounded at 0.75, and a short blue
+      // glint as lightbulb's.
+      L(dropPath(10, 5, 0.2, 0.75), Bt),
+      L('M5.25 10A2.75 2.75 0 0 0 8 12.75', { sw: D })
+    ]
+  },
+  hourglass: {
+    label: '沙漏',
+    key: 'portrait',
+    layers: [
+      // Blue end plates one gap from a light glass whose bulbs taper to a waist 2.5 wide (the
+      // slopes); the sand at the bottom is the glass clipped in blue.
+      L(rr(2, 1, 12, 1.5, 0.5) + rr(2, 13.5, 12, 1.5, 0.5)),
+      L(GLASS, Bt),
+      L(GLASS, { clip: rr(0, 10.5, 16, 3) })
+    ]
+  },
+  'battery-charging': {
+    label: '充电中',
+    key: 'wide',
+    layers: [
+      // battery-full's light body with a blue bolt printed on it: the bolt's zigzag and point
+      // need slopes. Its points are rounded at 0.5 and it keeps 2 in from the edges.
+      L(rr(1, 2.5, 12.5, 11, R) + rr(13.5, 6, 1.5, 4, [0, 0.75, 0.75, 0]), Bt),
+      L(polygon([[9.25, 3.6], [8.5, 7], [10.5, 7], [5.25, 12.4], [6, 9], [4, 9]], 0.5))
+    ]
+  },
+  'moon-star': {
+    label: '星月',
+    key: 'circle',
+    layers: [
+      // moon's crescent with the badge's sparkle in its bite, one gap from the inner edge.
+      L(crescent(7, 10.72, 5.28, 4.75), Bt),
+      L(sparkleAt(10.75, 5.25, 3.9))
+    ]
+  },
+  tag: {
+    label: '标签',
+    key: 'wide',
+    layers: [
+      // A price tag: a light card whose left end comes to a point (two slopes), rounded at 1.5, and
+      // a blue eyelet on the centre line. The point sits past the keyline.
+      L(polygon([[0.5, 8], [5, 2.5], [15, 2.5], [15, 13.5], [5, 13.5]], [1.5, 1.5, R, R, 1.5]), Bt),
+      L(circ(5.5, 8, 1.25))
+    ]
+  },
+  megaphone: {
+    label: '喇叭',
+    key: 'landscape',
+    layers: [
+      // A light horn widening to the right (two slopes), a blue mouthpiece and a blue rim, each one
+      // gap from the horn.
+      L(rr(1, 5.25, 2, 5.5, [r, 0.5, 0.5, r])),
+      L(polygon([[4, 5.25], [12, 2], [12, 14], [4, 10.75]], [0.5, 1, 1, 0.5]), Bt),
+      L(pill(13, 2, 2, 12))
+    ]
+  },
+  crown: {
+    label: '皇冠',
+    key: 'landscape',
+    layers: [
+      // A light crown whose top rises to three points (slopes) and a blue band one gap below. The
+      // points sit past the keyline so the rounded tips land on it.
+      L(polygon([[0.3, 3.6], [5, 7], [8, 1.2], [11, 7], [15.7, 3.6], [13.25, 11.25], [2.75, 11.25]], [0.75, 0.5, 0.75, 0.5, 0.75, 1, 1]), Bt),
+      L(rr(2.75, 12.25, 10.5, 1.75, 0.75))
+    ]
+  },
+  gem: {
+    label: '宝石',
+    key: 'landscape',
+    layers: [
+      // A cut gem: a flat table, the widest point at the girdle, and sides running down to a point
+      // (the slopes). The crown above the girdle is the gem clipped in blue.
+      L(GEM, Bt),
+      L(GEM, { clip: rr(0, 0, 16, 5.75) })
+    ]
+  },
+  plane: {
+    label: '飞机',
+    key: 'square',
+    layers: [
+      // A plane seen from above in one outline: a light fuselage and swept wings and tail (the
+      // slopes) in blue, clipped from the same outline as map's panels. With a blue fuselage and
+      // light wings, the thin wings dropped out at 16px.
+      L(PLANE, Bt),
+      L(PLANE, { clip: rr(0, 0, 6.75, 16) + rr(9.25, 0, 6.75, 16) })
+    ]
+  },
+  'flag-triangle': {
+    label: '三角旗',
+    key: 'portrait',
+    layers: [
+      // flag's blue pole and, one gap away, a light pennant that narrows to a point (the slopes).
+      L(pill(2, 1, K, 14)),
+      L(polygon([[4.5, 1], [15.43, 5.25], [4.5, 9.5]], [S, 0.75, S]), Bt)
+    ]
+  },
+  'traffic-cone': {
+    label: '路障',
+    key: 'portrait',
+    layers: [
+      // A light cone that widens to the base (the slopes) with a blue stripe printed across it, and
+      // a blue base one gap below.
+      L(CONE, Bt),
+      L(CONE, { clip: rr(0, 6, 16, 2.5) }),
+      L(rr(2, 13, 12, 2, t))
+    ]
+  },
+  award: {
+    label: '奖章',
+    key: 'tall',
+    layers: [
+      // A light rosette in front of two blue ribbon tails, cutting a gap of W round itself; each
+      // tail ends in a V notch (the slopes). A blue centre on the rosette.
+      L(polygon([[4.25, 8], [7.25, 8], [7.25, 15.8], [5.75, 14.2], [4.25, 15.8]], [0, 0, 0.5, 0.5, 0.5]) +
+        polygon([[8.75, 8], [11.75, 8], [11.75, 15.8], [10.25, 14.2], [8.75, 15.8]], [0, 0, 0.5, 0.5, 0.5])),
+      L(circ(8, 6, 5), { ...Bt, gap: W }),
+      L(circ(8, 6, 2.25))
+    ]
+  },
+  'mouse-pointer-click': {
+    label: '点击',
+    key: 'square',
+    layers: [
+      // A light pointer (two slopes meeting in a point, notched at the back) and a blue click ripple:
+      // a quarter arc round its tip. Separate click lines read as an arrow aimed at the pointer.
+      L(polygon([[5.4, 5.4], [15.35, 9.5], [11.1, 11.1], [9.5, 15.35]], [1, 0.75, 0.5, 0.75]), Bt),
+      L('M2.6 5.8A3.2 3.2 0 0 1 5.8 2.6', { sw: D })
+    ]
+  },
+  'star-half': {
+    label: '半星评分',
+    key: 'circle',
+    layers: [
+      // star's outline, its left half in blue (clipped from the same outline): half a rating.
+      L(polygon(starPts(8, 8.69, 7.88, 4.07, 1.058), 0.5), Bt),
+      L(polygon(starPts(8, 8.69, 7.88, 4.07, 1.058), 0.5), { clip: rr(0, 0, 8, 16) })
+    ]
+  },
+  'trending-up': {
+    label: '上涨',
+    key: 'square',
+    layers: [
+      // bold's light tile with a blue line that zigzags up at 45° and ends in an arrowhead
+      // corner. The line and its head are separate layers so the head can follow the line.
+      L(rr(2, 2, 12, 12, R), Bt),
+      L('M4.25 10L7.25 7L9 8.75L11.75 6', { sw: K }),
+      L('M9.25 6H11.75V8.5', { sw: K })
+    ]
+  },
+  'trending-down': {
+    label: '下跌',
+    key: 'square',
+    layers: [
+      // trending-up turned upside down: the line zigzags down to the arrowhead.
+      L(rr(2, 2, 12, 12, R), Bt),
+      L('M4.25 6L7.25 9L9 7.25L11.75 10', { sw: K }),
+      L('M9.25 10H11.75V7.5', { sw: K })
+    ]
+  },
+  'chart-line': {
+    label: '折线图',
+    key: 'square',
+    layers: [
+      // A light tile and a blue line through four points at different slopes (a line chart
+      // needs them; a 45° zigzag would read as trending-up).
+      L(rr(2, 2, 12, 12, R), Bt),
+      L('M4.5 10.75L6.75 7.25L9.25 9.25L11.5 5.25', { sw: K })
+    ]
+  },
+  'chart-area': {
+    label: '面积图',
+    key: 'square',
+    layers: [
+      // Two stacked areas on one baseline, their tops running up and down (slopes): the back one
+      // blue, the front one light, cutting a gap of W along its top.
+      L(polygon([[2, 7.25], [6, 3.75], [9.5, 6.25], [14, 0.15], [14, 14], [2, 14]], [r, 1, 1, 1, r, r])),
+      L(polygon([[2, 10.25], [6, 7.25], [9.5, 9.5], [14, 6], [14, 14], [2, 14]], [r, 1, 1, r, r, r]), { ...Bt, gap: W })
+    ]
+  },
+  activity: {
+    label: '动态',
+    key: 'square',
+    layers: [
+      // A light tile with a blue pulse line: flat, a sharp rise and fall, flat again. The peaks
+      // need slopes; the line keeps 2 in from the tile's edges.
+      L(rr(2, 2, 12, 12, R), Bt),
+      L('M4.75 8H6L7 5.25L9 10.75L10 8H11.25', { sw: K })
+    ]
+  },
+  'fast-forward': {
+    label: '快进',
+    key: 'circle',
+    layers: [
+      // Two of play's triangles in a row, one gap apart, centred on the disc.
+      L(circ(8, 8, 7), Bt),
+      L(polygon([[4, 5.25], [7.5, 8], [4, 10.75]], 0.75)),
+      L(polygon([[8.5, 5.25], [12, 8], [8.5, 10.75]], 0.75))
+    ]
+  },
+  rewind: {
+    label: '快退',
+    key: 'circle',
+    layers: [
+      // fast-forward turned round.
+      L(circ(8, 8, 7), Bt),
+      L(polygon([[12, 5.25], [12, 10.75], [8.5, 8]], 0.75)),
+      L(polygon([[7.5, 5.25], [7.5, 10.75], [4, 8]], 0.75))
+    ]
+  },
+  eject: {
+    label: '弹出',
+    key: 'circle',
+    layers: [
+      // A blue triangle pointing up and, one gap below, a blue bar of the same width, centred on
+      // the disc.
+      L(circ(8, 8, 7), Bt),
+      L(polygon([[8, 4.1], [11.25, 8.25], [4.75, 8.25]], 1)),
+      L(rr(4.75, 9.25, 6.5, 1.5, 0.75))
+    ]
+  },
+  italic: {
+    label: '斜体',
+    key: 'square',
+    layers: [
+      // bold's tile with a slanted I: two serifs and a stem leaning right (the slope is what
+      // makes it italic), in one stroke.
+      L(rr(2, 2, 12, 12, R), Bt),
+      L('M7.25 4.5H10.5M5.5 11.5H8.75M8.875 4.5L7.125 11.5', { sw: K })
+    ]
+  },
+  'chart-funnel': {
+    label: '漏斗图',
+    key: 'square',
+    layers: [
+      // A funnel narrowing downward (the slopes), cut straight into three bands a gap of 1
+      // apart; the middle band is blue. One layer per band, so the motion can fill them in turn.
+      L(FUNNEL, { ...Bt, clip: rr(0, 0, 16, 5.33) }),
+      L(FUNNEL, { clip: rr(0, 6.33, 16, 3.34) }),
+      L(FUNNEL, { ...Bt, clip: rr(0, 10.67, 16, 6) })
+    ]
+  },
+  'chart-radar': {
+    label: '雷达图',
+    key: 'circle',
+    layers: [
+      // A light pentagon (the slopes) and a blue data shape inside it, its corners at different
+      // distances along the pentagon's spokes. Drawn 5% taller to fill the circle, as star.
+      L(polygon(RADAR([1, 1, 1, 1, 1], 7.36), 1), Bt),
+      L(polygon(RADAR([0.62, 0.66, 0.42, 0.56, 0.38], 7.36), 0.5))
+    ]
+  },
+  'sticky-note': {
+    label: '便签',
+    key: 'square',
+    layers: [
+      // A light note with its lower right corner folded over: the fold is a 45° cut, and the flap
+      // is the note clipped in blue below and right of the fold. Two blue lines, one layer each.
+      L(NOTE, Bt),
+      L(NOTE, { clip: rr(10, 10, 6, 6, [1, 0, 0, 0]) }),
+      L('M5 5.5H11', { sw: D }),
+      L('M5 8.25H8.5', { sw: D })
+    ]
+  },
+  gauge: {
+    label: '仪表',
+    key: 'circle',
+    layers: [
+      // A light dial, three blue tick dots along its upper arc, and a blue needle that tapers to
+      // a point (slopes) from a round hub below the centre.
+      L(circ(8, 8, 7), Bt),
+      L([-150, -90, -30].map((a) => circ(f3(8 + 4.75 * Math.cos((a * Math.PI) / 180)), f3(9 + 4.75 * Math.sin((a * Math.PI) / 180)), 0.75)).join('')),
+      L(circ(8, 9, 1.75) + polygon(AXIS(8, 9, -60, -0.5, 4.25, 2.5, [0, 0.5, 0], true), 0))
+    ]
+  },
+  eraser: {
+    label: '橡皮擦',
+    key: 'square',
+    layers: [
+      // An eraser laid at 45°, as pencil: a blue rubber end and a light sleeve, cut straight
+      // across by a gap of 1.
+      L(polygon(AXIS(8, 8, -45, -6.9, -2.25, 5), [r, 0, 0, r])),
+      L(polygon(AXIS(8, 8, -45, -1.25, 6.9, 5), [0, r, r, 0]), Bt)
+    ]
+  },
+  wand: {
+    label: '魔法棒',
+    key: 'square',
+    layers: [
+      // A light stick laid at 45° with a blue tip printed on it, and the badge's sparkle one gap
+      // past the tip.
+      L(polygon(AXIS(8, 8, -45, -8.1, 1.66, 2.75), 1.375), Bt),
+      L(polygon(AXIS(8, 8, -45, -8.1, 1.66, 2.75), 1.375), { clip: polygon(AXIS(8, 8, -45, -1.5, 4, 6)) }),
+      L(sparkleAt(11, 5, 3))
+    ]
+  },
+  shapes: {
+    label: '形状',
+    key: 'square',
+    layers: [
+      // A blue triangle (the slopes) over a light circle and a light square, each one gap from
+      // the others.
+      L(polygon([[8, 1.42], [13.25, 7.5], [2.75, 7.5]], 1)),
+      L(circ(4.75, 11.25, 2.75), Bt),
+      L(rr(8.5, 8.5, 5.5, 5.5, r), Bt)
     ]
   }
 };
