@@ -34,13 +34,14 @@ const styleOf = (o) => Object.entries(o).map(([k, v]) => `${k}:${v}`).join(';');
  * Full SVG markup for one instance. Options: size (px), color (any CSS colour; defaults to
  * currentColor), variant ('color' | 'soft'; defaults to what the page sets, else 'color'), badgeColor (ink for the corner badge: any CSS
  * colour, or 'semantic'), title (accessible name), className, id. Line icons also take
- * strokeWidth (0.5 to 3, default 2) and read variant as 'outline' | 'line-duo' | 'fill' |
+ * strokeWidth (any width above 0, default 2) and read variant as 'outline' | 'line-duo' | 'fill' |
  * 'solid-tint'.
  */
 export function toSvg(ic, { size = 24, color, variant, badgeColor, strokeWidth, title, className, id = uid(), attrs = {} } = {}) {
-  // Two-tone and line icons have their own colours; the layered variants and badge ink don't apply.
+  // Two-tone and line icons have their own colours, so the layered variants don't apply; badge
+  // ink applies to the badges of every style.
   const line = ic.style === 'line', duo = ic.style === 'duotone' || line;
-  const style = { ...(duo ? {} : VARIANTS[variant] || {}), ...(color ? { color } : {}), ...(duo ? {} : badgeStyle(ic, badgeColor)) };
+  const style = { ...(duo ? {} : VARIANTS[variant] || {}), ...(color ? { color } : {}), ...badgeStyle(ic, badgeColor) };
   const a = {
     xmlns: 'http://www.w3.org/2000/svg', viewBox: ic.viewBox || VIEWBOX, width: size, height: size, fill: 'none', overflow: 'visible',
     class: ['kubai-icon', ic.style === 'duotone' && 'kubai-duotone', line && 'kubai-line', `kubai-icon-${ic.name}`, className].filter(Boolean).join(' '),
